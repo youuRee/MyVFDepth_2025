@@ -1,0 +1,471 @@
+# Copyright (c) 2023 42dot. All rights reserved.
+from collections import defaultdict
+
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader
+
+from dataset import construct_dataset
+from network import *
+from external.layers import ResnetEncoder
+
+from .base_model import BaseModel
+from .geometry import Pose, ViewRendering
+from .losses import DepthSynLoss, MultiCamLoss, SingleCamLoss
+
+import torchvision.utils as vutils
+import numpy as np
+import matplotlib.pyplot as plt
+
+from torchvision.io.image import decode_image, read_image
+from torchvision.models.segmentation import fcn_resnet50, FCN_ResNet50_Weights
+from torchvision.transforms.functional import to_pil_image
+
+_NO_DEVICE_KEYS = ['idx', 'dataset_idx', 'sensor_name', 'filename']
+
+
+class VFDepthAlgo(BaseModel):
+    """
+    Model class for "Self-supervised surround-view depth estimation with volumetric feature fusion"
+    """
+    def __init__(self, cfg, rank):
+        super(VFDepthAlgo, self).__init__(cfg)
+        self.rank = rank
+        self.read_config(cfg)
+        self.prepare_dataset(cfg, rank)
+        self.models = self.prepare_model(cfg, rank)   
+        self.losses = self.init_losses(cfg, rank)        
+        self.view_rendering, self.pose = self.init_geometry(cfg, rank) 
+
+        self.bool_Depth = True
+        self.bool_CmpFlow = True
+        self.bool_MotMask = True
+        # psosenet -> ResnetEncoder(self.num_layers, self.weights_init, 2)
+        self.models['motion_enc'] = ResnetEncoder(self.num_layers, self.weights_init, num_input_images=3).cuda()
+        self.models['motion_dec'] = MotionDecoder(np.array([64, 64, 128, 256, 512]), self.scales, num_input_images=3, inp_disp=False, out_dim=3).cuda()    # full motion decoder
+        #self.models['motion_mask'] = MotionDecoder(np.array([64, 64, 128, 256, 512]), self.scales, num_input_images=3, inp_disp=False, out_dim=1).cuda()    # probability that is independently moving
+        self.camli_conv2d = nn.Conv2d(4, 3, kernel_size=1, stride=1, padding=0).cuda()
+        
+        seg_weights = FCN_ResNet50_Weights.DEFAULT
+        self.seg_model = fcn_resnet50(weights=seg_weights).cuda()
+        self.seg_model.eval()
+        self.class_to_idx = {cls: idx for (idx, cls) in enumerate(seg_weights.meta["categories"])}
+        
+        self.set_optimizer()
+        
+        if self.pretrain and rank == 0:
+            self.load_weights()
+        
+    def read_config(self, cfg):    
+        for attr in cfg.keys(): 
+            for k, v in cfg[attr].items():
+                setattr(self, k, v)
+                
+    def init_geometry(self, cfg, rank):
+        view_rendering = ViewRendering(cfg, rank)
+        pose = Pose(cfg)
+        return view_rendering, pose
+        
+    def init_losses(self, cfg, rank):
+        # config 파일에 따라 loss 계산 달라짐 (ddp는 MultiCamLoss)
+        if self.aug_depth:
+            loss_model = DepthSynLoss(cfg, rank)
+        elif self.spatio_temporal or self.spatio:
+            loss_model = MultiCamLoss(cfg, rank)
+        else :
+            loss_model = SingleCamLoss(cfg, rank)
+        return loss_model
+        
+    def prepare_model(self, cfg, rank):
+        models = {}
+        models['pose_net'] = self.set_posenet(cfg)        
+        models['depth_net'] = self.set_depthnet(cfg)
+        # psosenet -> ResnetEncoder(self.num_layers, self.weights_init, 2)
+        #models['motion_enc'] = 
+        #models['motion_dec'] = 
+        #models['motion_mask'] =     
+
+        # DDP training
+        if self.ddp_enable == True:
+            from torch.nn.parallel import DistributedDataParallel as DDP            
+            process_group = dist.new_group(list(range(self.world_size)))
+            # set ddp configuration
+            for k, v in models.items():
+                # sync batchnorm
+                v = torch.nn.SyncBatchNorm.convert_sync_batchnorm(v, process_group)
+                # DDP enable
+                models[k] = DDP(v, find_unused_parameters=True, device_ids=[rank], broadcast_buffers=True)
+        return models
+
+    def set_motionnet(self, cfg):
+        return MotionDecoder(cfg).cuda()
+
+    def set_posenet(self, cfg):
+        if self.pose_model =='fusion':
+            return FusedPoseNet(cfg).cuda()
+        elif self.pose_model =='gt':
+            return GTPose(cfg).cuda()
+        else:
+            return MonoPoseNet(cfg).cuda()    
+        
+    def set_depthnet(self, cfg):
+        if self.depth_model == 'fusion':
+            return FusedDepthNet(cfg).cuda()
+        else:
+            return MonoDepthNet(cfg).cuda()
+
+    def prepare_dataset(self, cfg, rank):
+        if rank == 0:
+            print('### Preparing Datasets')
+        
+        if self.mode == 'train':
+            self.set_train_dataloader(cfg, rank)
+            if rank == 0 :
+                self.set_val_dataloader(cfg)
+                
+        if self.mode == 'eval':
+            self.set_eval_dataloader(cfg)
+
+    def set_train_dataloader(self, cfg, rank):                 
+        # jittering augmentation and image resizing for the training data
+        _augmentation = {
+            'image_shape': (int(self.height), int(self.width)), 
+            'jittering': (0.2, 0.2, 0.2, 0.05),
+            'crop_train_borders': (),
+            'crop_eval_borders': ()
+        }
+
+        # construct train dataset
+        train_dataset = construct_dataset(cfg, 'train', **_augmentation)
+
+        dataloader_opts = {
+            'batch_size': self.batch_size,
+            'shuffle': True,
+            'num_workers': self.num_workers,
+            'pin_memory': True,
+            'drop_last': True
+        }
+
+        if self.ddp_enable:
+            dataloader_opts['shuffle'] = False
+            self.train_sampler = torch.utils.data.distributed.DistributedSampler(
+                train_dataset, 
+                num_replicas = self.world_size,
+                rank=rank, 
+                shuffle=True
+            ) 
+            dataloader_opts['sampler'] = self.train_sampler
+
+        self._dataloaders['train'] = DataLoader(train_dataset, **dataloader_opts)
+        num_train_samples = len(train_dataset)    
+        self.num_total_steps = num_train_samples // (self.batch_size * self.world_size) * self.num_epochs
+
+    def set_val_dataloader(self, cfg):         
+        # Image resizing for the validation data
+        _augmentation = {
+            'image_shape': (int(self.height), int(self.width)),
+            'jittering': (0.0, 0.0, 0.0, 0.0),
+            'crop_train_borders': (),
+            'crop_eval_borders': ()
+        }
+
+        # construct validation dataset
+        val_dataset = construct_dataset(cfg, 'val', **_augmentation)
+
+        dataloader_opts = {
+            'batch_size': self.batch_size,
+            'shuffle': False,
+            'num_workers': self.num_workers,
+            'pin_memory': True,
+            'drop_last': True
+        }
+
+        self._dataloaders['val']  = DataLoader(val_dataset, **dataloader_opts)
+    
+    def set_eval_dataloader(self, cfg):  
+        # Image resizing for the validation data
+        _augmentation = {
+            'image_shape': (int(self.height), int(self.width)),
+            'jittering': (0.0, 0.0, 0.0, 0.0),
+            'crop_train_borders': (),
+            'crop_eval_borders': ()
+        }
+
+        # construct validation dataset
+        eval_dataset = construct_dataset(cfg, 'val', **_augmentation)
+
+        dataloader_opts = {
+            'batch_size': self.eval_batch_size,
+            'shuffle': False,
+            'num_workers': self.eval_num_workers,
+            'pin_memory': True,
+            'drop_last': True
+        }
+
+        self._dataloaders['eval'] = DataLoader(eval_dataset, **dataloader_opts)
+
+    def set_optimizer(self):
+        parameters_to_train = []
+        for v in self.models.values():
+            parameters_to_train += list(v.parameters())
+
+        # ✅ motion networks 추가
+        #parameters_to_train += list(self.motion_enc.parameters())
+        #parameters_to_train += list(self.motion_dec.parameters())
+        #parameters_to_train += list(self.motion_mask.parameters())
+
+        self.optimizer = optim.Adam(
+        parameters_to_train, 
+            self.learning_rate
+        )
+
+        self.lr_scheduler = optim.lr_scheduler.StepLR(
+            self.optimizer, 
+            self.scheduler_step_size,
+            0.1
+        )
+    
+    def process_batch(self, inputs, rank):
+        """
+        Pass a minibatch through the network and generate images, depth maps, and losses.
+        """
+        for key, ipt in inputs.items():
+            if key not in _NO_DEVICE_KEYS:
+                if 'context' in key:
+                    inputs[key] = [ipt[k].float().to(rank) for k in range(len(inputs[key]))]
+                else:
+                    inputs[key] = ipt.float().to(rank)   
+        
+        outputs = self.estimate_vfdepth(inputs)
+        losses = self.compute_losses(inputs, outputs)
+        return outputs, losses  
+
+    def estimate_vfdepth(self, inputs):
+        """
+        This function sets dataloader for validation in training.
+        """          
+        # pre-calculate inverse of the extrinsic matrix        
+        inputs['extrinsics_inv'] = torch.inverse(inputs['extrinsics'])
+        inputs[('gt_mask', 0)] = torch.zeros(1, 6, 1, 384, 640).cuda()
+         
+        # init dictionary 
+        outputs = {}
+        for cam in range(self.num_cams):
+            outputs[('cam', cam)] = {}
+            
+            prediction = self.seg_model(inputs[('color', 0, 0)][:,cam,:,:])["out"]
+            normalized_masks = prediction.softmax(dim=1)
+            mask = normalized_masks[0, self.class_to_idx["person"]] + normalized_masks[0, self.class_to_idx["car"]] + normalized_masks[0, self.class_to_idx["bus"]] + normalized_masks[0, self.class_to_idx["motorbike"]] + normalized_masks[0, self.class_to_idx["bicycle"]]
+            inputs[('gt_mask', 0)][:,cam,:,:] = mask.unsqueeze(0).unsqueeze(0)
+            
+            
+
+
+        pose_pred = self.predict_pose(inputs)                
+        depth_feats = self.predict_depth(inputs)
+
+        for cam in range(self.num_cams):       
+            outputs[('cam', cam)].update(pose_pred[('cam', cam)])              
+            outputs[('cam', cam)].update(depth_feats[('cam', cam)])
+            #outputs[('cam', cam)].update(depth_feats[('cam', cam)])
+
+        #print("Before motion\n", outputs[('cam', 0)].keys())
+        self.predict_motions(inputs, outputs)
+
+        if self.syn_visualize:
+            outputs['disp_vis'] = depth_feats['disp_vis']
+            
+        self.compute_depth_maps(inputs, outputs)
+        '''
+        print('inputs: ', inputs.keys())
+        print('sparse_depth: ', inputs['sparse_depth'].shape)
+        print('outputs: ', outputs.keys())
+        print(outputs[('cam', 0)][('depth', 0)].shape) # torch.Size([1, 1, 384, 640]) -> batch, depth, h, w
+        print(outputs[('cam', 0)])
+        '''
+        return outputs
+    
+    def predict_motion_feat(self, inputs, outputs, cam):
+
+        """ Predict egomotion (in a form of rotation and translation)
+        """
+
+        motion_inputs = {f_i: self.camli_conv2d(torch.cat([inputs["color_aug", f_i, 0][:,cam,:,:], inputs["gt_depth", f_i][:,cam,:,:]], dim=1)) for f_i in self.frame_ids}
+
+        for f_gap in set([abs(f_i) for f_i in self.frame_ids[1:]]):
+            f_prev, f_next = -1 * f_gap, f_gap
+
+            # Keep order and center frame at zero
+            motion_input = torch.cat([motion_inputs[f_prev], motion_inputs[0], motion_inputs[f_next]], 1)
+            motion_feats = self.models['motion_enc'](motion_input)
+
+            outputs[('cam', cam)].update({
+                ('motion_feats', 0, f_gap) :   [motion_input] + motion_feats,
+            })
+
+    
+    def predict_motions(self, inputs, outputs):
+
+        """ Predict independent object motion 
+        """
+
+        if not self.bool_CmpFlow and not self.bool_MotMask:
+            return  # early terminate since no need for output
+
+        for cam in range(self.num_cams): 
+            self.predict_motion_feat(inputs, outputs, cam)
+
+            for f_gap in set([abs(f_i) for f_i in self.frame_ids[1:]]):
+                f_prev, f_next = -1 * f_gap, f_gap
+
+                motion_input = outputs[('cam', cam)][('motion_feats', 0, f_gap)]
+
+                # subtraction since order is ignored during, obtain its mean
+                ego_translation = (outputs[('cam', cam)][('translation', 0, f_prev)].detach() - outputs[('cam', cam)][('translation', 0, f_next)].detach()) / 2
+                ego_axisangle = (outputs[('cam', cam)][('axisangle', 0, f_prev)].detach() - outputs[('cam', cam)][('axisangle', 0, f_next)].detach()) / 2
+                ego_motion = torch.cat((ego_translation, ego_axisangle), -1).permute(0,2,1).unsqueeze(3)
+                
+
+                #if self.bool_CmpFlow:
+                motion_out = self.models['motion_dec'](motion_input, ego_motion)
+
+                # full motion predictions need to be inverted for finding a point back in time
+                # always using frame 0 as reference, so it is omitted -> (name, f_i, scale)
+                outputs[('cam', cam)].update({(k[0], f_prev, k[1]) : -1 * v for k,v in motion_out.items()}) 
+                outputs[('cam', cam)].update({(k[0], f_next, k[1]) :  1 * v for k,v in motion_out.items()}) 
+                
+                '''
+                if self.bool_MotMask:
+                    motion_prob = self.models['motion_mask'](motion_input, ego_motion)
+
+                    # motion probabilities just need to be duplicated
+                    # always using frame 0 as reference, so it is omitted -> (name, f_i, scale)
+                    outputs[('cam', cam)].update({(k[0], f_prev, k[1]) : v for k,v in motion_prob.items()})
+                    outputs[('cam', cam)].update({(k[0], f_next, k[1]) : v for k,v in motion_prob.items()})
+                '''
+        #print("AFter motion\n", outputs[('cam', 0)].keys())
+
+    def predict_pose(self, inputs):      
+        """
+        This function predicts poses.
+        """          
+        net = None
+        if (self.mode != 'train') and self.ddp_enable:
+            net = self.models['pose_net'].module
+        else:
+            net = self.models['pose_net']
+        
+        pose = self.pose.compute_pose(net, inputs)
+        return pose
+
+    def predict_depth(self, inputs):
+        """
+        This function predicts disparity maps.
+        """                  
+        net = None
+        if (self.mode != 'train') and self.ddp_enable: 
+            net = self.models['depth_net'].module
+        else:
+            net = self.models['depth_net']
+
+        if self.depth_model == 'fusion':
+            depth_feats = net(inputs)
+        else:         
+            depth_feats = {}
+            for cam in range(self.num_cams):
+                input_depth = inputs[('color_aug', 0, 0)][:, cam, ...]
+                depth_feats[('cam', cam)] = net(input_depth)
+        return depth_feats
+    
+    def compute_depth_maps(self, inputs, outputs):     
+        """
+        This function computes depth map for each viewpoint.
+        """ 
+        # outputs(즉, 모델 통과해서 나온 예측 값)을 to_depth 함수를 통해 depth map으로 만들어주기
+        source_scale = 0
+        for cam in range(self.num_cams):
+            ref_K = inputs[('K', source_scale)][:, cam, ...]
+            for scale in self.scales:
+                disp = outputs[('cam', cam)][('disp', scale)]
+                outputs[('cam', cam)][('depth', scale)] = self.to_depth(disp, ref_K)
+                if self.aug_depth:
+                    disp = outputs[('cam', cam)][('disp', scale, 'aug')]
+                    outputs[('cam', cam)][('depth', scale, 'aug')] = self.to_depth(disp, ref_K)
+    
+                '''
+                for frame_id in self.frame_ids[1:]:  
+                    disp = outputs[('cam', cam)][('disp', scale)]
+                    baseline = torch.norm(outputs[('cam',cam)][('cam_T_cam', 0, frame_id)][0,:3,3])
+                    outputs[('cam', cam)][('depth', scale, 0, frame_id)] = self.to_depth(disp, ref_K, baseline)
+                    #print(frame_id, " ", outputs[('cam', cam)].keys())
+                outputs[('cam', cam)][('depth', scale)] = (outputs[('cam', cam)][('depth', scale, 0, -1)] + outputs[('cam', cam)][('depth', scale, 0, 1)]) / 2
+
+                if self.aug_depth:
+                    for frame_id in self.frame_ids[1:]:  
+                        disp = outputs[('cam', cam)][('disp', scale)]
+                        baseline = torch.norm(outputs[('cam',cam)][('cam_T_cam', 0, frame_id)][0,:3,3])
+                        disp = outputs[('cam', cam)][('disp', scale, 'aug')]
+                        outputs[('cam', cam)][('depth', scale, 'aug', 0, frame_id)] = self.to_depth(disp, ref_K, baseline)
+                    outputs[('cam', cam)][('depth', scale, 'aug')] = (outputs[('cam', cam)][('depth', scale, 'aug', 0, -1)] + outputs[('cam', cam)][('depth', scale, 'aug', 0, 1)]) / 2
+                '''
+    #def sparse_depth_map(self, inputs, outputs):
+    
+    def to_depth(self, disp_in, K_in):        
+        """
+        This function transforms disparity value into depth map while multiplying the value with the focal length.
+        """
+        min_disp = 1/self.max_depth
+        max_disp = 1/self.min_depth
+        disp_range = max_disp-min_disp
+
+        disp_in = F.interpolate(disp_in, [self.height, self.width], mode='bilinear', align_corners=False)
+        disp = min_disp + disp_range * disp_in
+        depth = 1/disp
+        return depth * K_in[:, 0:1, 0:1].unsqueeze(2)/self.focal_length_scale
+    
+    def compute_losses(self, inputs, outputs):
+        """
+        This function computes losses.
+        """
+        # lidar loss: inputs['point_clud']로 sparse depth map 만들고 output이랑 depth loss 구하기
+        losses = 0
+        loss_fn = defaultdict(list)
+        loss_mean = defaultdict(float)
+        '''
+        loss_dict(카메라 하나 당 loss):  dict_keys(['reproj_loss', 'spatio_loss', 'spatio_tempo_loss', 'lidar_loss', 'smooth', 'depth/mean', 'depth/max', 'depth/min'])
+        
+        loss_fn(카메라 별 loss):  dict_keys(['reproj_loss', 'spatio_loss', 'spatio_tempo_loss', 'lidar_loss', 'smooth', 'depth/mean', 'depth/max', 'depth/min', 'pose/tx', 'pose/ty', 'pose/tz'])
+        '''
+        # generate image and compute loss per cameara
+        self.losses.bool_Depth = self.bool_Depth
+        self.losses.bool_CmpFlow = self.bool_CmpFlow
+        self.losses.bool_MotMask = self.bool_MotMask
+
+        for cam in range(self.num_cams):
+            self.pred_cam_imgs(inputs, outputs, cam)
+            cam_loss, loss_dict = self.losses(inputs, outputs, cam) # init_losses에서 초기화
+            losses += cam_loss  
+            for k, v in loss_dict.items():
+                loss_fn[k].append(v)
+
+        losses /= self.num_cams
+        
+        for k in loss_fn.keys():
+            loss_mean[k] = sum(loss_fn[k]) / float(len(loss_fn[k]))
+            #print(k, ': ', loss_mean[k])
+            
+        loss_mean['total_loss'] = losses        
+        return loss_mean
+
+    def pred_cam_imgs(self, inputs, outputs, cam):
+        """
+        This function renders projected images using camera parameters and depth information.
+        """                  
+        rel_pose_dict = self.pose.compute_relative_cam_poses(inputs, outputs, cam)
+        
+        self.view_rendering.bool_CmpFlow = self.bool_CmpFlow
+        self.view_rendering.bool_MotMask = self.bool_MotMask
+        self.view_rendering(inputs, outputs, cam, rel_pose_dict)  

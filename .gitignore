@@ -1,0 +1,23 @@
+# B, C, D 내부의 대용량 폴더
+B_OnlyShortFusion/gtpose_synth/
+B_OnlyShortFusion/logs_eval/
+C_LongVoxelFusion/long_voxel_cl_fusion/
+D_LongBinFusion_Small/lightweight_longbinfusion_ver1/
+
+# --- (추가 권장) ---
+
+# 주피터 노트북 파일 무시
+*.ipynb
+.ipynb_checkpoints/
+
+# 파이썬 캐시 파일
+__pycache__/
+*.pyc
+
+# 로그, 데이터, 모델 파일 (공통)
+*.log
+*.csv
+*.pth
+*.pt
+*.ckpt
+*.zip
