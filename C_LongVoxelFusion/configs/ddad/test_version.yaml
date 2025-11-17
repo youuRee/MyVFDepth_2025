@@ -34,7 +34,7 @@ model:
   long_proj_d_end: 100
 
 data:
-  data_path: '/dataset/DDAD/raw_data/ddad.json'
+  data_path: '/dataset/dataset/DDAD/raw_data/ddad.json'
   log_dir: './long_voxel_cl_fusion/'
   dataset: 'ddad'
   back_context: 1

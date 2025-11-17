@@ -200,6 +200,8 @@ class VFDepthAlgo(BaseModel):
             return FusedPoseNet(cfg).cuda()
         elif self.pose_model =='gt':
             return GTPose(cfg).cuda()
+        elif self.pose_model =='slam':
+            return LidarSlamPose(cfg).cuda()
         elif self.pose_model =='pnp':
             return PnPPose(cfg).cuda()
         else:

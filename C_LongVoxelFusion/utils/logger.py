@@ -75,7 +75,7 @@ class Logger:
             self.init_vis()
 
         self._metric_names = ['abs_rel', 'sq_rel', 'rms', 'log_rms', 'a1', 'a2', 'a3']
-        self.txt_path = '/workspace/MyVFDepth-LongRange2/log_results.txt'
+        self.txt_path = '/workspace/MyVFDepth_2025/C_LongVoxelFusion/log_results.txt'
 
     def read_config(self, cfg):
         for attr in cfg.keys(): 

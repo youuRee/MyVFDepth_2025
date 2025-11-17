@@ -306,7 +306,7 @@ class VFDepthTrainer:
             loss = losses['total_loss']
             if torch.isnan(loss):
                 print(f"[WARNING] NaN loss at step {self.step}, skipping.")
-                torch.save(inputs, f"/workspace/MyVFDepth-LongRange2/NaN_Loss/step_{self.step}.pt")
+                torch.save(inputs, f"/workspace/MyVFDepth_2025/C_LongVoxelFusion/NaN_Loss/step_{self.step}.pt")
                 #model.zero_grad(set_to_none=True)
                 del loss, outputs
                 torch.cuda.empty_cache()
@@ -378,7 +378,7 @@ class VFDepthTrainer:
                 else:
                     name = 'next'
             
-                path = '/workspace/MyVFDepth-LongRange2/logs/cam' + str(cam) + '/' + str(self.step) + 'step_' + name + '.png'
+                path = '/workspace/MyVFDepth_2025/C_LongVoxelFusion/logs/cam' + str(cam) + '/' + str(self.step) + 'step_' + name + '.png'
                 
                 gt_img = inputs[('color', 0, scale)][:, cam, ...][0].permute(1, 2, 0).detach().cpu().numpy()
                 warp_img = outputs[('cam', cam)][('color', frame_id, scale)][0].permute(1, 2, 0).detach().cpu().numpy()

@@ -10,7 +10,7 @@ from .fusion_depthnet import FusedDepthNet
 from .gt_pose import GTPose
 #from .pnp_pose import PnPPose
 from .motion_decoder import MotionDecoder
-#from .unet import UNetFlowInterp
+from .slam_pose import LidarSlamPose
 #from .refinenet import FlowRefiner
 
-__all__ = ['MonoDepthNet', 'MonoPoseNet', 'FusedDepthNet', 'FusedPoseNet', 'GTPose', 'MotionDecoder']
+__all__ = ['MonoDepthNet', 'MonoPoseNet', 'FusedDepthNet', 'FusedPoseNet', 'GTPose', 'LidarSlamPose', 'MotionDecoder']
