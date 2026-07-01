@@ -130,9 +130,10 @@ class DepthSynLoss(MultiCamLoss):
             cam_loss += self.spatio_coeff * spatio_loss + self.spatio_tempo_coeff * spatio_tempo_loss             
             cam_loss += self.disparity_smoothness * smooth_loss / (2 ** scale)
             cam_loss += depthsyn_loss
+            #cam_loss += 0.1 * lidar_single_loss
+            #cam_loss += 0.1 * lidar_aug_loss
             cam_loss += lidar_single_loss
-            #cam_loss += lidar_spatio_loss
-            cam_loss += lidar_aug_loss
+            #cam_loss += lidar_aug_loss
             
             # pose consistency loss
             if self.pose_model == 'fsm' and cam != 0:
@@ -173,7 +174,7 @@ class DepthSynLoss(MultiCamLoss):
                     loss_dict['depth_sm_loss'] = depth_sm_loss.item()
                     loss_dict['depth_con_loss'] = depth_con_loss.item()                    
                     loss_dict['lidar_single_loss'] = lidar_single_loss.item()
-                    loss_dict['lidar_aug_loss'] = lidar_aug_loss.item()
+                    #loss_dict['lidar_aug_loss'] = lidar_aug_loss.item()
                     #loss_dict['motion_loss'] = motion_loss.item()
                     
                 #if self.bool_CmpFlow:

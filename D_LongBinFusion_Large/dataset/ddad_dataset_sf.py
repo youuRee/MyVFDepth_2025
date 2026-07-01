@@ -356,7 +356,6 @@ class DDADdatasetSF(DGPDataset):
             data['prev_pose'] = self.get_context('pose', cam)[0].matrix
             data['next_pose'] = self.get_context('pose', cam)[1].matrix
             
-            
             '''
             if cam == 0:
                 voxels, coords, _ = voxelize(data['point_cloud'], np.array([1, 1, 1.5]), np.array([-50, -50, -15, 50, 50, 15]), 5, 200000)
@@ -424,6 +423,8 @@ class DDADdatasetSF(DGPDataset):
             inst_segment = torch.from_numpy(inst_segment).unsqueeze(1) # (N_inst, 1, H, W)
             sam_masks[cam] = inst_segment#.to(device=images.device, dtype=images.dtype)
             '''
+            data['ori_depth'] = data['depth']
+            data['ori_mask'] = data['mask']
             sample.append(data)
 
         # apply same data transformations for all sensors
@@ -457,5 +458,5 @@ class DDADdatasetSF(DGPDataset):
             if key in sample:
                 del sample[key]
         '''
-
+        
         return sample

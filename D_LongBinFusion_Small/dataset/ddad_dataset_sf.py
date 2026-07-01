@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from .data_util import transform_mask_sample, mask_loader_scene, align_dataset
+from .data_util import transform_mask_sample, transform_optional_mask_sample, mask_loader_scene, sky_mask_loader, align_dataset
 
 from external.utils import Camera, generate_depth_map, make_list
 from external.dataset import DGPDataset, SynchronizedSceneDataset, stack_sample
@@ -19,13 +19,15 @@ class DDADdatasetSF(DGPDataset):
     """
     Superclass for DGP dataset loaders of the packnet-sfm repository.
     """
-    def __init__(self, *args, with_mask, scale_range, **kwargs):
+    def __init__(self, *args, with_mask, scale_range, with_sky_mask=False, sky_mask_path=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.cameras = kwargs['cameras']
         self.scales = np.arange(scale_range+2) 
 
         ## self-occ masks 
         self.with_mask = with_mask
+        self.with_sky_mask = with_sky_mask
+        self.sky_mask_path = sky_mask_path
         cur_path = os.path.dirname(os.path.realpath(__file__))
         self.mask_path = os.path.join(cur_path, 'ddad_mask')
         file_name = os.path.join(self.mask_path, 'mask_idx_dict.pkl')
@@ -407,6 +409,10 @@ class DDADdatasetSF(DGPDataset):
                 data.update({
                     'mask': self.mask_loader(self.mask_path, mask_idx, self.cameras[cam])
                 })
+            if self.with_sky_mask:
+                data.update({
+                    'sky_mask': sky_mask_loader(self.sky_mask_path, filename)
+                })
             # if context is returned
             if self.has_context:
                 data.update({
@@ -433,6 +439,7 @@ class DDADdatasetSF(DGPDataset):
             sample = [self.data_transform(smp) for smp in sample] # smp['rgb']: <PIL.Image.Image image mode=RGB size=1936x1216 at 0x7F98BAF57700> -> torch.Size([3, 384, 640])
             
             sample = [transform_mask_sample(smp, self.data_transform) for smp in sample]
+            sample = [transform_optional_mask_sample(smp, self.data_transform, 'sky_mask') for smp in sample]
         
         # stack and align dataset for our trainer
         sample = stack_sample(sample)

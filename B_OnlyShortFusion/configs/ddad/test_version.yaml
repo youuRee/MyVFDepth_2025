@@ -66,7 +66,7 @@ training:
   focal_length_scale: 300
 
   ## depth synthesis
-  aug_depth: True
+  aug_depth: False
   aug_angle: [15, 15, 40] # 15deg(roll), 15deg(pitch), 40deg(yaw) augmentation
 
 # Loss hyperparams
@@ -83,12 +83,13 @@ loss:
   
 eval:
   eval_batch_size: 1
-  eval_num_workers: 8
-  eval_min_depth: 1
-  eval_max_depth: 200
-  eval_visualize: True
-  syn_visualize: True
+  eval_num_workers: 10
+  eval_min_depth: 0
+  eval_max_depth: 100
+  eval_visualize: False
+  syn_visualize: False
   syn_idx: 102
+  eval_interval: False
   
 load:
   pretrain: False

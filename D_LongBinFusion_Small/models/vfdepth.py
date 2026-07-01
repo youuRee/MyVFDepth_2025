@@ -94,6 +94,10 @@ class VFDepthAlgo(BaseModel):
         
         self.set_optimizer()
         
+        self.count = 1
+        self.mean_data_t = 0
+        self.mean_model_t = 0
+        
         if self.pretrain and rank == 0:
             self.load_weights()
     
@@ -305,14 +309,42 @@ class VFDepthAlgo(BaseModel):
         """
         Pass a minibatch through the network and generate images, depth maps, and losses.
         """
+        '''
+        from time import perf_counter
+        def now():
+            return perf_counter()
+
+        def elapsed_ms(t0):
+            return (perf_counter() - t0) * 1000.0
+        
+        t0 = now()
+        '''
         for key, ipt in inputs.items():
             if key not in _NO_DEVICE_KEYS:
                 if 'context' in key:
                     inputs[key] = [ipt[k].float().to(rank) for k in range(len(inputs[key]))]
                 else:
                     inputs[key] = ipt.float().to(rank)   
-                    
+        
+        #data_time = elapsed_ms(t0)
+        #self.mean_data_t += data_time
+        
+        #t1 = now()           
         outputs = self.estimate_vfdepth(inputs)
+        '''
+        model_time = elapsed_ms(t1)
+        self.mean_model_t += model_time
+        
+        print('Data(ms) = ', data_time)
+        print('Model(ms) = ', model_time)
+        print('Mean Data Time = ', self.mean_data_t / self.count)
+        print('Mean Model Time = ', self.mean_model_t / self.count)
+        
+        self.count += 1
+        '''
+        #if self.mode != 'train':   
+        #    losses = None
+        #else:
         losses = self.compute_losses(inputs, outputs)
         return outputs, losses  
 
@@ -436,11 +468,12 @@ class VFDepthAlgo(BaseModel):
         for cam in range(self.num_cams):
             outputs[('cam', cam)] = {}
 
-
+        #if self.mode == 'train':  
         pose_pred = self.predict_pose(inputs)                
         depth_feats = self.predict_depth(inputs)
 
-        for cam in range(self.num_cams):       
+        for cam in range(self.num_cams):
+            #if self.mode == 'train':        
             outputs[('cam', cam)].update(pose_pred[('cam', cam)])              
             outputs[('cam', cam)].update(depth_feats[('cam', cam)])
             #outputs[('cam', cam)].update(depth_feats[('cam', cam)])

@@ -96,8 +96,8 @@ def align_dataset(sample, scales, contexts):
     
     # 나중에 scale 고려해서 수정
     sample[('gt_depth', 0)] = sample['cur_depth']
-    sample[('gt_depth', -1)] = sample['prev_depth']
-    sample[('gt_depth', 1)] = sample['next_depth']
+    #sample[('gt_depth', -1)] = sample['prev_depth']
+    #sample[('gt_depth', 1)] = sample['next_depth']
     
     # for context data
     for idx, frame in enumerate(contexts):

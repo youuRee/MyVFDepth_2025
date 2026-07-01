@@ -222,14 +222,14 @@ class Logger:
         for cam in range(self.num_cams):
             target_view = outputs['cam', cam]
 
-            if syn_depth:
-                depth_gt = target_view[('aug_lidar_depth', 0)]
-                _, _, h, w = depth_gt.shape
-                depth_pred = target_view[('depth', 0, 'aug')].to(depth_gt.device)
-            else:
-                depth_gt = inputs['depth'][:, cam, ...]
-                _, _, h, w = depth_gt.shape
-                depth_pred = target_view[('depth', 0)].to(depth_gt.device)
+            #if syn_depth:
+            #    depth_gt = target_view[('aug_lidar_depth', 0)]
+            #    _, _, h, w = depth_gt.shape
+            #    depth_pred = target_view[('depth', 0, 'aug')].to(depth_gt.device)
+            #else:
+            depth_gt = inputs['depth'][:, cam, ...]
+            _, _, h, w = depth_gt.shape
+            depth_pred = target_view[('depth', 0)].to(depth_gt.device)
             
             depth_pred = torch.clamp(F.interpolate(
                         depth_pred, [h, w], mode='bilinear', align_corners=False), 

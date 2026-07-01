@@ -151,6 +151,7 @@ def cal_depth_error(pred, target):
     sq_rel = torch.mean((pred-target).pow(2) / target)
     rmse = torch.sqrt(torch.mean((pred-target).pow(2)))
     rmse_log = torch.sqrt(torch.mean((torch.log(target) - torch.log(pred)).pow(2)))
+    mae = torch.mean(torch.abs(pred - target))
 
     thresh = torch.max((target/pred), (pred/ target))
     a1 = (thresh < 1.25).float().mean()
@@ -161,4 +162,4 @@ def cal_depth_error(pred, target):
     for i in range(1, len(depth_list)):
         print_by_depth(pred, target, depth_list[i-1], depth_list[i])
     '''
-    return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3
+    return abs_rel, sq_rel, rmse, rmse_log, a1, a2, a3, mae

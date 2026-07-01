@@ -193,7 +193,7 @@ class ViewRendering(nn.Module):
         # [('cam_T_cam', 0, -1)]: t -> t-1, [('cam_T_cam', 0, 1)]: t+1 -> t
         pix_coords = self.project(tar_depth, torch.inverse(T), tar_invK, src_K)
         depth_warped = F.grid_sample(src_depth_warped, pix_coords, mode='bilinear', 
-                                        padding_mode='zeros', align_corners=True) # src에서 tar로 옮긴 point를 tar pixel 좌표에 배치
+                                    padding_mode='zeros', align_corners=True) # src에서 tar로 옮긴 point를 tar pixel 좌표에 배치
         mask_warped = F.grid_sample(src_mask, pix_coords, mode='nearest',
                                     padding_mode='zeros', align_corners=True)
 
@@ -519,8 +519,8 @@ class ViewRendering(nn.Module):
             #accum_point_clouds = [past2curr_pts, next2curr_pts]
             #accum_point_clouds = torch.cat(accum_point_clouds)
             
-            curr_depth = inputs[('gt_depth', 0)][:, cam, ...]
-            H, W = 384, 640
+            #curr_depth = inputs[('gt_depth', 0)][:, cam, ...]
+            _, _, H, W = ref_depth.shape
             k = inputs[('K', 0)][:, cam, :, :][0]
             #p_wc = inputs[("pose", 0)][:, cam, :, :][0]
             #p_cw = p_wc.inverse()

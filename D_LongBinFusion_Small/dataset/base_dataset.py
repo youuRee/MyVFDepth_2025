@@ -16,7 +16,9 @@ def construct_dataset(cfg, mode, **kwargs):
             'depth_type': cfg['data']['depth_type'] if 'gt_depth' in cfg['data']['train_requirements'] else None,
             'scale_range': cfg['model']['fusion_level'] if 'fusion_level' in cfg['model'] else -1,
             'with_pose': 'gt_pose' in cfg['data']['train_requirements'],
-            'with_mask': 'mask' in cfg['data']['train_requirements']
+            'with_mask': 'mask' in cfg['data']['train_requirements'],
+            'with_sky_mask': 'sky_mask' in cfg['data']['train_requirements'],
+            'sky_mask_path': cfg['data'].get('sky_mask_path', None)
         }
         
     elif mode == 'val':
@@ -28,7 +30,9 @@ def construct_dataset(cfg, mode, **kwargs):
             'depth_type': cfg['data']['depth_type'] if 'gt_depth' in cfg['data']['val_requirements'] else None,
             'scale_range': cfg['model']['fusion_level'] if 'fusion_level' in cfg['model'] else -1,
             'with_pose': 'gt_pose' in cfg['data']['val_requirements'],
-            'with_mask': 'mask' in cfg['data']['val_requirements']            
+            'with_mask': 'mask' in cfg['data']['val_requirements'],
+            'with_sky_mask': 'sky_mask' in cfg['data']['val_requirements'],
+            'sky_mask_path': cfg['data'].get('sky_mask_path', None)
         }
       
     # DDAD dataset
@@ -40,6 +44,8 @@ def construct_dataset(cfg, mode, **kwargs):
         )       
     # NuScenes dataset         
     elif cfg['data']['dataset'] == 'nuscenes':
+        dataset_args.pop('with_sky_mask', None)
+        dataset_args.pop('sky_mask_path', None)
         from dataset.nuscenes_dataset import NuScenesdataset
         dataset = NuScenesdataset(
             cfg['data']['data_path'], mode,

@@ -2,7 +2,10 @@
 B_OnlyShortFusion/gtpose_synth/
 B_OnlyShortFusion/logs_eval/
 C_LongVoxelFusion/long_voxel_cl_fusion/
+C_LongVoxelFusion/logs/
+D_LongBinFusion_Large/logs/
 D_LongBinFusion_Small/lightweight_longbinfusion_ver1/
+D_LongBinFusion_Small/logs/
 
 # --- (추가 권장) ---
 
@@ -21,3 +24,23 @@ __pycache__/
 *.pt
 *.ckpt
 *.zip
+
+# 실험 로그/평가 결과 산출물
+*/log_results*.txt
+*/logs/
+*/logs2/
+*/logs_eval/
+*/results/
+*/results2/
+
+# 실험별 출력 디렉토리
+B_OnlyShortFusion/collection_volumetric_fusionnet/
+C_LongVoxelFusion/long_voxel_cl_fusion/
+D_LongBinFusion_Small/lightweight_longbinfusion_ver1/
+D_LongBinFusion_Small/not_aug_depth/
+D_LongBinFusion_Small/not_lidar_aug_loss/
+D_LongBinFusion_Small/voxel_fusion_conv3d/
+D_LongBinFusion_Small/voxel_fusion_conv3d_lidarloss_weighting/
+
+# 압축/논문 산출물
+submission_paper_compressed.pdf

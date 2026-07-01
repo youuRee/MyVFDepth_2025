@@ -519,8 +519,8 @@ class ViewRendering(nn.Module):
             #accum_point_clouds = [past2curr_pts, next2curr_pts]
             #accum_point_clouds = torch.cat(accum_point_clouds)
             
-            curr_depth = inputs[('gt_depth', 0)][:, cam, ...]
-            H, W = 384, 640
+            #curr_depth = inputs[('gt_depth', 0)][:, cam, ...]
+            _, _, H, W = ref_depth.shape
             k = inputs[('K', 0)][:, cam, :, :][0]
             #p_wc = inputs[("pose", 0)][:, cam, :, :][0]
             #p_cw = p_wc.inverse()

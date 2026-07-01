@@ -34,15 +34,16 @@ model:
   long_proj_d_end: 100
 
 data:
-  data_path: '/dataset/DDAD/raw_data/ddad.json'
-  log_dir: './lightweight_longbinfusion_ver1/' # 2D feat encoder -> MobileNetV2, Bin feat encoding -> Conv1D
+  data_path: '/dataset/dataset/DDAD/raw_data/ddad.json'
+  log_dir: './voxel_fusion_conv3d/' # 2D feat encoder -> MobileNetV2, Bin feat encoding -> Conv1D
   dataset: 'ddad'
   back_context: 1
   forward_context: 1
   depth_type: 'lidar'
+  sky_mask_path: '/dataset/dataset/DDAD/sky_mask'
   cameras: ['camera_01', 'camera_05', 'camera_06', 'camera_07', 'camera_08', 'camera_09']
   train_requirements: (gt_pose, mask)
-  val_requirements: (gt_pose, gt_depth, mask)
+  val_requirements: (gt_pose, gt_depth, mask, sky_mask)
   
 training:
   # Basic
@@ -97,12 +98,13 @@ loss:
 eval:
   eval_batch_size: 1
   eval_num_workers: 10
-  eval_min_depth: 1
+  eval_min_depth: 0
   eval_max_depth: 100
   eval_visualize: True
   syn_visualize: False
+  syn_eval: True
   syn_idx: 102
-  eval_interval: True
+  eval_interval: False
   
 load:
   pretrain: False

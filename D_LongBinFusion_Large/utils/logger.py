@@ -74,7 +74,7 @@ class Logger:
         if self.eval_visualize:
             self.init_vis()
 
-        self._metric_names = ['abs_rel', 'sq_rel', 'rms', 'log_rms', 'a1', 'a2', 'a3']
+        self._metric_names = ['abs_rel', 'sq_rel', 'rms', 'log_rms', 'a1', 'a2', 'a3', 'mae']
         self.txt_path = '/workspace/MyVFDepth_2025/D_LongBinFusion_Large/log_results.txt'
 
     def read_config(self, cfg):
@@ -221,13 +221,15 @@ class Logger:
         
         for cam in range(self.num_cams):
             target_view = outputs['cam', cam]
-
+            
+            
             if syn_depth:
                 depth_gt = target_view[('aug_lidar_depth', 0)]
                 _, _, h, w = depth_gt.shape
                 depth_pred = target_view[('depth', 0, 'aug')].to(depth_gt.device)
             else:
-                depth_gt = inputs['depth'][:, cam, ...]
+                #depth_gt = inputs['depth'][:, cam, ...] # [1, 1, 384, 640]
+                depth_gt = inputs['ori_depth'][:, cam, ...].unsqueeze(0) # [1, 1216, 1936] -> [1, 1, 1216, 1936]
                 _, _, h, w = depth_gt.shape
                 depth_pred = target_view[('depth', 0)].to(depth_gt.device)
             
@@ -236,7 +238,8 @@ class Logger:
                          min_eval_depth, max_eval_depth)
             depth_pred = depth_pred.detach()
 
-            mask = (depth_gt > min_eval_depth) * (depth_gt < max_eval_depth) * inputs['mask'][:, cam, ...]
+            #mask = (depth_gt > min_eval_depth) * (depth_gt < max_eval_depth) * inputs['mask'][:, cam, ...]
+            mask = (depth_gt > min_eval_depth) * (depth_gt < max_eval_depth) * inputs['ori_mask'][:, cam, ...]#.unsqueeze(0)
             mask = mask.bool()
             
             depth_gt = depth_gt[mask]

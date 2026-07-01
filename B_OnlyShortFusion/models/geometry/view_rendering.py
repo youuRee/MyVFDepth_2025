@@ -203,27 +203,6 @@ class ViewRendering(nn.Module):
                 target_view[('color', frame_id, scale)] = warped_img
                 target_view[('color_mask', frame_id, scale)] = warped_mask
                 
-                # for temporal lidar loss
-                # 같은 카메라라서 src, ref는 같은 내부 파라미터를 가짐
-                gt_src_depth = inputs[('gt_depth', frame_id)][:,cam, ...]              
-                src_invK = inputs[('inv_K', source_scale)][:,cam, ...]
-                src_K = inputs[('K', source_scale)][:,cam, ...]
-                
-                # current view to the novel view
-                warped_depth, warped_depth_mask = self.get_virtual_sparse_depth(
-                        gt_src_depth, 
-                        src_mask, 
-                        ref_depth, 
-                        ref_invK, 
-                        ref_K, 
-                        T,
-                        self.min_depth,
-                        self.max_depth
-                    )
-
-                target_view[('warp_depth', frame_id, scale)] = warped_depth
-                target_view[('warp_depth_mask', frame_id, scale)] = warped_depth_mask
-                
             # spatio-temporal learning
             if self.spatio or self.spatio_temporal:
                 for frame_id in self.frame_ids:
@@ -237,11 +216,6 @@ class ViewRendering(nn.Module):
                     overlap_mask = torch.zeros_like(ref_mask)
                     overlap_depth = torch.zeros_like(ref_gt_depth)
                     overlap_depth_mask = torch.zeros_like(ref_mask)
-
-                    # cvcdepth
-                    use_depth_consistency = hasattr(self, 'spatial_depth_consistency_loss_weight')
-                    if use_depth_consistency:
-                        overlap_depth2 = torch.zeros_like(ref_depth)
                     
                     for cur_index in self.rel_cam_list[cam]:
                         # for partial surround view training
@@ -274,55 +248,10 @@ class ViewRendering(nn.Module):
                         # assuming no overlap between warped images
                         overlap_img = overlap_img + warped_img
                         overlap_mask = overlap_mask + warped_mask
-                        
-                        # for spatio lidar loss
-                        gt_src_depth = inputs[('gt_depth', frame_id)][:, cur_index, ...]
-                        warped_depth, warped_depth_mask = self.get_virtual_sparse_depth(
-                                gt_src_depth, 
-                                src_mask, 
-                                ref_depth, 
-                                ref_invK, 
-                                src_K,
-                                rel_pose, 
-                                self.min_depth,
-                                self.max_depth
-                            )
-                        
-                        overlap_depth = overlap_depth + warped_depth
-                        overlap_depth_mask = overlap_depth_mask + warped_depth_mask
-                    
-                        # cvcdepth
-                        if use_depth_consistency:
-                            if frame_id==0:
-                                if self.spatial_depth_consistency_type=='pre':
-                                    src_depth = outputs[('cam', cur_index)][('depth', scale)]
-                                    src_invK = inputs[('inv_K', source_scale)][:, cur_index, ...]
-                                    src_depth_tar_view = self.project.transform_depth(src_depth,torch.linalg.inv(rel_pose),src_invK,ref_K)[:,2:,]
-                                    warped_depth2, warped_mask2 = self.get_virtual_image(
-                                        src_depth_tar_view,
-                                        src_mask,
-                                        ref_depth,
-                                        ref_invK,
-                                        src_K,
-                                        rel_pose,
-                                        source_scale
-                                    )
-
-                                else:
-                                    raise NotImplementedError
-
-
-                                overlap_depth2 = overlap_depth2 + warped_depth2
 
                     target_view[('overlap', frame_id, scale)] = overlap_img
                     target_view[('overlap_mask', frame_id, scale)] = overlap_mask
                     
-                    target_view[('overlap_depth', frame_id, scale)] = overlap_depth
-                    target_view[('overlap_depth_mask', frame_id, scale)] = overlap_depth_mask
-
-                    # cvcdepth
-                    if use_depth_consistency:
-                        target_view[('overlap_depth2', frame_id, scale)] = overlap_depth2
                     
             # depth augmentation at a novel view
             if self.aug_depth:

@@ -519,9 +519,9 @@ class ViewRendering(nn.Module):
             #accum_point_clouds = [past2curr_pts, next2curr_pts]
             #accum_point_clouds = torch.cat(accum_point_clouds)
             
-            curr_depth = inputs[('gt_depth', 0)][:, cam, ...]
-            H, W = 384, 640
-            k = inputs[('K', 0)][:, cam, :, :][0]
+            #curr_depth = inputs[('gt_depth', 0)][:, cam, ...]
+            #_, _, H, W = ref_depth.shape
+            #k = inputs[('K', 0)][:, cam, :, :][0]
             #p_wc = inputs[("pose", 0)][:, cam, :, :][0]
             #p_cw = p_wc.inverse()
             #T_L_to_W = inputs[('L_pose', 0)][0][0]
@@ -529,88 +529,12 @@ class ViewRendering(nn.Module):
             #accum_depth = self.pca_to_depth(accum_point_clouds, curr_depth, H, W, k, p_cw, T_L_to_W)
             #target_view[('accum_depth', scale)] = accum_depth.unsqueeze(0).unsqueeze(0)
             
+            # aug gt depth using lidar
+            _, _, H, W = ref_depth.shape
+            k = inputs[('K', 0)][:, cam, :, :][0]
             T_C_from_L_aug = inputs['extrinsics_aug'][:,cam,:,:][0].inverse()
             aug_lidar_dpeth = self.get_lidar_aug_depth(curr_pts[0], H, W, k, T_C_from_L_aug)
             target_view[('aug_lidar_depth', scale)] = aug_lidar_dpeth.unsqueeze(0).unsqueeze(0)
-            
-            
-            '''
-            # SfFlow
-            #if self.bool_CmpFlow:
-            source_scale = 0
-            for i, frame_id in enumerate(self.frame_ids[1:]):
                 
-                K = inputs[('K', source_scale)][:, cam, ...]
-                T = target_view[('cam_T_cam', 0, frame_id)]
-
-                cam_points = self.backproject_depth[source_scale](ref_depth, inputs[('inv_K', source_scale)][:, cam, ...])
-                target_view[('cam_points', 0, scale)] = cam_points
-                
-                _, _, ego_flow = self.project_3d[source_scale](cam_points, K, T) # (B, H, W, 2), (B, 3, H*W)
-                ego_flow = ego_flow.permute(0, 3, 1, 2)  # (B, 2, H, W)
-                
-                target_view[('warp_depth', frame_id, scale)] = self.forward_splat_depth_with_flow(
-                            depth=ref_depth,  # (B,1,H,W)
-                            flow=ego_flow,   # (B,2,H,W)
-                            height=384,
-                            width=640)
-                
-            
-                target_view[('sample_ego', frame_id, scale)] = sample_ego
-                target_view[('ego_flow', frame_id, scale)] = ego_flow
-                
-                pred_flow = target_view[('dense_flow', frame_id, scale)]
-                 (1) dense_flow: (B, 2, H, W) → (B, H, W, 2)
-                flow_grid = pred_flow.permute(0, 2, 3, 1)
-                valid_mask = (flow_grid != 0).float()
-
-                flow_grid = flow_grid * valid_mask + sample_ego * (1 - valid_mask)
-                target_view[('dense_flow', frame_id, scale)] = flow_grid
-
-                
-                flow_map_np = flow_grid[0].detach().cpu().numpy()
-                flow_vis = flow_to_color(flow_map_np)
-
-                plt.figure(figsize=(20, 10))
-                plt.imshow(flow_vis)
-                plt.title("Flow")
-                plt.axis('off')
-                plt.savefig('dense_flow_map.png')
-                
-
-                # (2) 정규화된 pixel grid 생성
-                B, _, H, W = pred_flow.shape
-                grid_y, grid_x = torch.meshgrid(
-                    torch.linspace(-1, 1, H, device=pred_flow.device),
-                    torch.linspace(-1, 1, W, device=pred_flow.device),
-                    indexing='ij'
-                )
-                base_grid = torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0).expand(B, -1, -1, -1)  # (B, H, W, 2)
-
-                # (3) flow는 정규화된 좌표 기준이 아니므로 정규화
-                norm_flow = torch.zeros_like(flow_grid)
-                norm_flow[..., 0] = flow_grid[..., 0] / (W / 2)
-                norm_flow[..., 1] = flow_grid[..., 1] / (H / 2)
-
-                # (4) 최종 샘플링 위치
-                sample = base_grid + norm_flow
-                                
-                target_view[('sample', frame_id, scale)] = sample
-                target_view[('color', frame_id, scale)] = F.grid_sample(inputs[('color', frame_id, source_scale)][:, cam, ...], sample, padding_mode='border', align_corners=True)
-                
-                target_view[('warp_depth', frame_id, scale)] = self.forward_splat_depth_with_flow(
-                            depth=ref_depth,  # (B,1,H,W)
-                            flow=pred_flow,   # (B,2,H,W)
-                            height=384,
-                            width=640)
-                            
-                
-                new_color = target_view[('color', frame_id, scale)][0].permute(1, 2, 0).detach().cpu().numpy()
-                plt.figure(figsize=(20, 10))
-                plt.imshow(new_color)
-                plt.title(f"CAM{cam}, frame_id={frame_id}")
-                plt.axis('off')
-                plt.savefig('new_color.png')
-            '''    
         outputs[('cam', cam)] = target_view
 

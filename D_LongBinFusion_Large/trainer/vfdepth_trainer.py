@@ -498,7 +498,7 @@ class VFDepthTrainer:
                 for key in self.depth_metric_names:
                     avg_depth_eval_metric[key] += depth_eval_metric[key]
                     avg_depth_eval_median[key] += depth_eval_median[key]
-                
+                    
                 '''
                 scale = 0
                 forder_name = inputs['filename'][0].split('/')[0]

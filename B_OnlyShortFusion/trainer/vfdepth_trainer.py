@@ -193,13 +193,6 @@ class VFDepthTrainer:
                     avg_depth_eval_median[key] += depth_eval_median[key]
                 
                 
-                perf = 'scene = ' + forder_name
-                perf += '\nmetric | ' + ' | '.join([f'{k}: {v:.3f}' for k, v in depth_eval_metric.items()])
-                perf += '\nmedian | ' + ' | '.join([f'{k}: {v:.3f}' for k, v in depth_eval_median.items()])
-                
-                with open('/workspace/MyVFDepth-SimpleFusion/scene_by_results_gtpose_synth_30m.txt', "a") as f:
-                    f.write(perf + "\n")
-                
                 if vis_results:
                     self.logger.log_result(inputs, outputs, batch_idx, self.syn_visualize)
                 

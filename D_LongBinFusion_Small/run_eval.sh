@@ -1,4 +1,4 @@
-for i in {10..19}
+for i in {1..3}
 do
     echo "Evaluating with weight $i ..."
     python -W ignore eval.py \

@@ -174,101 +174,109 @@ class NuScenesdataset(Dataset):
                         
         # load and return if exists
         if os.path.exists(filename):
-            return np.load(filename, allow_pickle=True)['depth']
-        else:
-            lidar_sample = self.dataset.get(
-                'sample_data', sample['data']['LIDAR_TOP'])
+            try:
+                return np.load(filename, allow_pickle=True)["depth"]
+                
+            except Exception as e:
+                print(f"[WARN] Invalid depth file, will regenerate: {filename} ({e})")
+                try:
+                    os.remove(filename)
+                except OSError:
+                    pass
+        
+        lidar_sample = self.dataset.get(
+            'sample_data', sample['data']['LIDAR_TOP'])
 
-            # lidar points                
-            lidar_file = os.path.join(
-                self.path, lidar_sample['filename'])
-            lidar_points = np.fromfile(lidar_file, dtype=np.float32)
-            lidar_points = lidar_points.reshape(-1, 5)[:, :3]
+        # lidar points                
+        lidar_file = os.path.join(
+            self.path, lidar_sample['filename'])
+        lidar_points = np.fromfile(lidar_file, dtype=np.float32)
+        lidar_points = lidar_points.reshape(-1, 5)[:, :3]
 
-            # lidar -> world
-            lidar_pose = self.dataset.get(
-                'ego_pose', lidar_sample['ego_pose_token'])
-            lidar_rotation= Quaternion(lidar_pose['rotation'])
-            lidar_translation = np.array(lidar_pose['translation'])[:, None]
-            lidar_to_world = np.vstack([
-                np.hstack((lidar_rotation.rotation_matrix, lidar_translation)),
+        # lidar -> world
+        lidar_pose = self.dataset.get(
+            'ego_pose', lidar_sample['ego_pose_token'])
+        lidar_rotation= Quaternion(lidar_pose['rotation'])
+        lidar_translation = np.array(lidar_pose['translation'])[:, None]
+        lidar_to_world = np.vstack([
+            np.hstack((lidar_rotation.rotation_matrix, lidar_translation)),
+            np.array([0, 0, 0, 1])
+        ])
+
+        # lidar -> ego
+        sensor_sample = self.dataset.get(
+            'calibrated_sensor', lidar_sample['calibrated_sensor_token'])
+        lidar_to_ego_rotation = Quaternion(
+            sensor_sample['rotation']).rotation_matrix
+        lidar_to_ego_translation = np.array(
+            sensor_sample['translation']).reshape(1, 3)
+
+        ego_lidar_points = np.dot(
+            lidar_points[:, :3], lidar_to_ego_rotation.T)
+        ego_lidar_points += lidar_to_ego_translation
+
+        homo_ego_lidar_points = np.concatenate(
+            (ego_lidar_points, np.ones((ego_lidar_points.shape[0], 1))), axis=1)
+
+
+        # world -> ego
+        ego_pose = self.dataset.get(
+                'ego_pose', cam_sample['ego_pose_token'])
+        ego_rotation = Quaternion(ego_pose['rotation']).inverse
+        ego_translation = - np.array(ego_pose['translation'])[:, None]
+        world_to_ego = np.vstack([
+                np.hstack((ego_rotation.rotation_matrix,
+                            ego_rotation.rotation_matrix @ ego_translation)),
                 np.array([0, 0, 0, 1])
+                ])
+
+        # Ego -> sensor
+        sensor_sample = self.dataset.get(
+            'calibrated_sensor', cam_sample['calibrated_sensor_token'])
+        sensor_rotation = Quaternion(sensor_sample['rotation'])
+        sensor_translation = np.array(
+            sensor_sample['translation'])[:, None]
+        sensor_to_ego = np.vstack([
+            np.hstack((sensor_rotation.rotation_matrix, 
+                        sensor_translation)),
+            np.array([0, 0, 0, 1])
             ])
-
-            # lidar -> ego
-            sensor_sample = self.dataset.get(
-                'calibrated_sensor', lidar_sample['calibrated_sensor_token'])
-            lidar_to_ego_rotation = Quaternion(
-                sensor_sample['rotation']).rotation_matrix
-            lidar_to_ego_translation = np.array(
-                sensor_sample['translation']).reshape(1, 3)
-
-            ego_lidar_points = np.dot(
-                lidar_points[:, :3], lidar_to_ego_rotation.T)
-            ego_lidar_points += lidar_to_ego_translation
-
-            homo_ego_lidar_points = np.concatenate(
-                (ego_lidar_points, np.ones((ego_lidar_points.shape[0], 1))), axis=1)
-
-
-            # world -> ego
-            ego_pose = self.dataset.get(
-                    'ego_pose', cam_sample['ego_pose_token'])
-            ego_rotation = Quaternion(ego_pose['rotation']).inverse
-            ego_translation = - np.array(ego_pose['translation'])[:, None]
-            world_to_ego = np.vstack([
-                    np.hstack((ego_rotation.rotation_matrix,
-                               ego_rotation.rotation_matrix @ ego_translation)),
-                    np.array([0, 0, 0, 1])
-                    ])
-
-            # Ego -> sensor
-            sensor_sample = self.dataset.get(
-                'calibrated_sensor', cam_sample['calibrated_sensor_token'])
-            sensor_rotation = Quaternion(sensor_sample['rotation'])
-            sensor_translation = np.array(
-                sensor_sample['translation'])[:, None]
-            sensor_to_ego = np.vstack([
-                np.hstack((sensor_rotation.rotation_matrix, 
-                           sensor_translation)),
-                np.array([0, 0, 0, 1])
-               ])
-            ego_to_sensor = np.linalg.inv(sensor_to_ego)
-            
-            # lidar -> sensor
-            lidar_to_sensor = ego_to_sensor @ world_to_ego @ lidar_to_world
-            homo_ego_lidar_points = torch.from_numpy(homo_ego_lidar_points).float()
-            cam_lidar_points = np.matmul(lidar_to_sensor, homo_ego_lidar_points.T).T
-
-            # depth > 0
-            depth_mask = cam_lidar_points[:, 2] > 0
-            cam_lidar_points = cam_lidar_points[depth_mask]
-
-            # sensor -> image
-            intrinsics = np.eye(4)
-            intrinsics[:3, :3] = sensor_sample['camera_intrinsic']
-            pixel_points = np.matmul(intrinsics, cam_lidar_points.T).T
-            pixel_points[:, :2] /= pixel_points[:, 2:3]
-            
-            # load image for pixel range
-            image_filename = os.path.join(
-                self.path, cam_sample['filename'])
-            img = pil.open(image_filename)
-            h, w, _ = np.array(img).shape
-            
-            # mask points in pixel range
-            pixel_mask = (pixel_points[:, 0] >= 0) & (pixel_points[:, 0] <= w-1)\
-                        & (pixel_points[:,1] >= 0) & (pixel_points[:,1] <= h-1)
-            valid_points = pixel_points[pixel_mask].round().int()
-            valid_depth = cam_lidar_points[:, 2][pixel_mask]
+        ego_to_sensor = np.linalg.inv(sensor_to_ego)
         
-            depth = np.zeros([h, w])
-            depth[valid_points[:, 1], valid_points[:,0]] = valid_depth
+        # lidar -> sensor
+        lidar_to_sensor = ego_to_sensor @ world_to_ego @ lidar_to_world
+        homo_ego_lidar_points = torch.from_numpy(homo_ego_lidar_points).float()
+        cam_lidar_points = np.matmul(lidar_to_sensor, homo_ego_lidar_points.T).T
+
+        # depth > 0
+        depth_mask = cam_lidar_points[:, 2] > 0
+        cam_lidar_points = cam_lidar_points[depth_mask]
+
+        # sensor -> image
+        intrinsics = np.eye(4)
+        intrinsics[:3, :3] = sensor_sample['camera_intrinsic']
+        pixel_points = np.matmul(intrinsics, cam_lidar_points.T).T
+        pixel_points[:, :2] /= pixel_points[:, 2:3]
         
-            # save depth map
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            np.savez_compressed(filename, depth=depth)
-            return depth
+        # load image for pixel range
+        image_filename = os.path.join(
+            self.path, cam_sample['filename'])
+        img = pil.open(image_filename)
+        h, w, _ = np.array(img).shape
+        
+        # mask points in pixel range
+        pixel_mask = (pixel_points[:, 0] >= 0) & (pixel_points[:, 0] <= w-1)\
+                    & (pixel_points[:,1] >= 0) & (pixel_points[:,1] <= h-1)
+        valid_points = pixel_points[pixel_mask].round().int()
+        valid_depth = cam_lidar_points[:, 2][pixel_mask]
+    
+        depth = np.zeros([h, w])
+        depth[valid_points[:, 1], valid_points[:,0]] = valid_depth
+    
+        # save depth map
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        np.savez_compressed(filename, depth=depth)
+        return depth
 
     def get_tranformation_mat(self, pose):
         """

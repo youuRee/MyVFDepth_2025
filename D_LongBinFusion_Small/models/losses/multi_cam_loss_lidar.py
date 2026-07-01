@@ -305,6 +305,7 @@ class MultiCamLoss(SingleCamLoss):
             single_loss += (loss * mask).sum() / (mask.sum() + 1e-6)
             
             # aug
+            '''
             pred_aug_depth = target_view[('depth', scale, 'aug')]
             gt_aug_depth = target_view[('aug_lidar_depth', scale)]
             mask = (gt_aug_depth != 0)#(gt_aug_depth > min_depth) * (gt_aug_depth < max_depth)
@@ -312,7 +313,7 @@ class MultiCamLoss(SingleCamLoss):
             
             loss = F.l1_loss(pred_aug_depth, gt_aug_depth, reduction='none')
             aug_loss += (loss * mask).sum() / (mask.sum() + 1e-6)
-            
+            '''
         return single_loss / len(self.scales), spatio_loss / len(self.scales), aug_loss / len(self.scales)
     
     
@@ -476,7 +477,7 @@ class MultiCamLoss(SingleCamLoss):
         loss_dict = {}
         cam_loss = 0. # loss across the multi-scale
         target_view = outputs[('cam', cam)]
-        output_file = 'lidar_loss.csv'
+        #output_file = 'lidar_loss.csv'
         
         for scale in self.scales:
             kargs = {
@@ -485,11 +486,10 @@ class MultiCamLoss(SingleCamLoss):
                 'ref_mask': inputs['mask'][:,cam,...]
             }
                           
-            #reprojection_loss = self.compute_reproj_loss(inputs, target_view, **kargs)
+            reprojection_loss = self.compute_reproj_loss(inputs, target_view, **kargs)
             smooth_loss = self.compute_smooth_loss(inputs, target_view, **kargs)
-            #spatio_loss = self.compute_spatio_loss(inputs, target_view, **kargs)
-            lidar_single_loss, lidar_tempo_loss, lidar_sptio_loss, lidar_spatio_tempo_loss = self.compute_lidar_loss_3d(inputs, target_view, **kargs)
-            print(cam,' = ', lidar_loss)
+            spatio_loss = self.compute_spatio_loss(inputs, target_view, **kargs)
+            lidar_single_loss, _, _ = self.compute_lidar_loss_2d(inputs, target_view, **kargs)
             '''
             self.lidar_loss_list.append(lidar_loss)
             if cam == 5:
@@ -516,7 +516,7 @@ class MultiCamLoss(SingleCamLoss):
             cam_loss += self.spatio_coeff * spatio_loss + self.spatio_tempo_coeff * spatio_tempo_loss                            
             cam_loss += self.pose_loss_coeff* pose_loss
             cam_loss += lidar_single_loss
-            cam_loss += lidar_tempo_loss
+            
             
             ##########################
             # for logger
@@ -526,7 +526,6 @@ class MultiCamLoss(SingleCamLoss):
                 loss_dict['spatio_loss'] = spatio_loss.item()
                 loss_dict['spatio_tempo_loss'] = spatio_tempo_loss.item()
                 loss_dict['lidar_single_loss'] = lidar_single_loss.item()
-                loss_dict['lidar_tempo_loss'] = lidar_tempo_loss.item()
                 loss_dict['smooth'] = smooth_loss.item()
                 if self.pose_model == 'fsm' and cam != 0:
                     loss_dict['pose'] = pose_loss.item()

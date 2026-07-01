@@ -379,7 +379,7 @@ class VFDepthTrainer:
                 else:
                     name = 'next'
             
-                path = '/workspace/MyVFDepth-LongRange3/logs/cam' + str(cam) + '/' + str(self.step) + 'step_' + name + '.png'
+                path = '/workspace/MyVFDepth_2025/D_LongBinFusion_Small/logs/cam' + str(cam) + '/' + str(self.step) + 'step_' + name + '.png'
                 
                 gt_img = inputs[('color', 0, scale)][:, cam, ...][0].permute(1, 2, 0).detach().cpu().numpy()
                 warp_img = outputs[('cam', cam)][('color', frame_id, scale)][0].permute(1, 2, 0).detach().cpu().numpy()
@@ -459,8 +459,8 @@ class VFDepthTrainer:
         #scene_list = ['000151', '000157', '000159', '000160', '000171', '000174', '000189', '000191', '000193', '000195', '000196', '000199']
         for batch_idx, inputs in enumerate(process):   
             # visualize synthesized depth maps
-            #if self.syn_visualize and batch_idx < self.syn_idx:
-            #    continue
+            if self.syn_visualize and batch_idx < self.syn_idx:
+                continue
             
             outputs, _ = model.process_batch(inputs, self.rank)
             
@@ -492,7 +492,7 @@ class VFDepthTrainer:
                     break
 
             else:
-                syn_depth = self.syn_visualize
+                syn_depth = self.syn_eval
                 depth_eval_metric, depth_eval_median = self.logger.compute_depth_losses(inputs, outputs, syn_depth)
                 
                 for key in self.depth_metric_names:

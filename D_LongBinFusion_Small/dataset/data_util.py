@@ -30,6 +30,20 @@ def transform_mask_sample(sample, data_transform):
     return sample
 
 
+def transform_optional_mask_sample(sample, data_transform, key):
+    """
+    This function transforms optional masks to match input rgb images.
+    """
+    if key not in sample:
+        return sample
+
+    image_shape = data_transform.keywords['image_shape']
+    resize_transform = transforms.Resize(image_shape, interpolation=pil.NEAREST)
+    tensor_transform = transforms.ToTensor()
+    sample[key] = tensor_transform(resize_transform(sample[key]))
+    return sample
+
+
 def img_loader(path):
     """
     This function loads rgb image.
@@ -44,6 +58,16 @@ def mask_loader_scene(path, mask_idx, cam):
     This function loads mask that correspondes to the scene and camera.
     """
     fname = os.path.join(path, str(mask_idx), '{}_mask.png'.format(cam.upper()))    
+    with open(fname, 'rb') as f:
+        with pil.open(f) as img:
+            return img.convert('L')
+
+
+def sky_mask_loader(path, filename):
+    """
+    This function loads per-frame DDAD sky masks.
+    """
+    fname = os.path.join(path, filename.replace('{}/', '') + '.png')
     with open(fname, 'rb') as f:
         with pil.open(f) as img:
             return img.convert('L')
@@ -96,8 +120,8 @@ def align_dataset(sample, scales, contexts):
     
     # 나중에 scale 고려해서 수정
     sample[('gt_depth', 0)] = sample['cur_depth']
-    sample[('gt_depth', -1)] = sample['prev_depth']
-    sample[('gt_depth', 1)] = sample['next_depth']
+    #sample[('gt_depth', -1)] = sample['prev_depth']
+    #ample[('gt_depth', 1)] = sample['next_depth']
     
     # for context data
     for idx, frame in enumerate(contexts):

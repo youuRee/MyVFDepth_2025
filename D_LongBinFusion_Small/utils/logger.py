@@ -51,6 +51,16 @@ def plot_norm_tb(writer, step, img, title, j=0):
     writer.add_image(title, img_resized[j].data, step)
 
 
+def get_sky_mask(inputs, cam_id, ref):
+    if 'sky_mask' not in inputs:
+        return None
+
+    sky_mask = inputs['sky_mask'][:, cam_id, ...].to(ref.device)
+    if sky_mask.shape[-2:] != ref.shape[-2:]:
+        sky_mask = F.interpolate(sky_mask.float(), ref.shape[-2:], mode='nearest')
+    return sky_mask.bool()
+
+
 def plot_disp_tb(writer, step, disp, title, j=0):
     """
     This function plots disparity maps on tensotboard.
@@ -75,7 +85,7 @@ class Logger:
             self.init_vis()
 
         self._metric_names = ['abs_rel', 'sq_rel', 'rms', 'log_rms', 'a1', 'a2', 'a3']
-        self.txt_path = '/workspace/MyVFDepth-LongRange3/log_results.txt'
+        self.txt_path = '/workspace/MyVFDepth_2025/D_LongBinFusion_Small/log_results.txt'
 
     def read_config(self, cfg):
         for attr in cfg.keys(): 
@@ -95,11 +105,19 @@ class Logger:
         vis_path = os.path.join(self.log_path, 'vis_results')
         os.makedirs(vis_path, exist_ok=True)
         
+        sky_vis_path = os.path.join(self.log_path, 'vis_sky_remove')
+        os.makedirs(sky_vis_path, exist_ok=True)
+
         self.cam_paths = []
+        self.sky_cam_paths = []
         for cam_id in range(self.num_cams):
             cam_path = os.path.join(vis_path, f'cam{cam_id:d}')
             os.makedirs(cam_path, exist_ok=True)
             self.cam_paths.append(cam_path)
+
+            sky_cam_path = os.path.join(sky_vis_path, f'cam{cam_id:d}')
+            os.makedirs(sky_cam_path, exist_ok=True)
+            self.sky_cam_paths.append(sky_cam_path)
             
             
         if self.syn_visualize:
@@ -195,10 +213,20 @@ class Logger:
             target_view = outputs[('cam', cam_id)]
             disps = target_view['disp', scale]
             for jdx, disp in enumerate(disps):       
+                cur_idx = idx*self.batch_size + jdx 
+                sky_mask = get_sky_mask(inputs, cam_id, disp.unsqueeze(0).unsqueeze(0))
+                if sky_mask is not None:
+                    disp_sky = disp.clone().masked_fill(sky_mask[jdx:jdx+1, ...][0, 0], 0.0)
+                    disp_sky = colormap(disp_sky)[0,...].transpose(1,2,0)
+                    disp_sky = pil.fromarray((disp_sky * 255).astype(np.uint8))
+                    disp_sky.save(os.path.join(self.sky_cam_paths[cam_id], f'{cur_idx:03d}_disp.jpg'))
+
                 disp = colormap(disp)[0,...].transpose(1,2,0)
                 disp = pil.fromarray((disp * 255).astype(np.uint8))
-                cur_idx = idx*self.batch_size + jdx 
                 disp.save(os.path.join(self.cam_paths[cam_id], f'{cur_idx:03d}_disp.jpg'))
+                rgb = inputs[('color',0,0)][jdx][cam_id].cpu()
+                rgb = pil.fromarray((rgb.permute(1,2,0).numpy()*255).astype(np.uint8))
+                rgb.save(os.path.join(self.cam_paths[cam_id], f'{cur_idx:03d}_rgb.jpg'))
             
         if syn_visualize:    
             syn_disps = outputs['disp_vis']
